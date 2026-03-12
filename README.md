@@ -1,7 +1,7 @@
 # Manómetro ambiental
 ## Technical lead: Ana María Estrada
-## Firmware engineer: 
-## Hardware integration engineer:
+## Firmware engineer: Manuela Ramírez
+## Hardware integration engineer: Juan Manuel Gómez
 ## Verification and testing engineer: Tomás Bedoya
 
 ### Introducción y descripción del problema:
