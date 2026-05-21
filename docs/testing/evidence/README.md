@@ -1,3 +1,7 @@
 # Evidencia 
 
-Esta carpeta contiene capturas de pantalla, registros (logs), fotos y evidencia de validación.
+Esta carpeta contiene:
+- capturas de pantalla
+- Evidencias de integración
+- fotos
+- Resultados de pruebas
