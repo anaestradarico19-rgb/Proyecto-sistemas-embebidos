@@ -1,23 +1,24 @@
-# TC-001 Pressure Sensor Validation
+# TC-001 Validación del Sensor de Presión
 
-## Requirement Traceability
+## Trazabilidad de Requerimiento
 RF-001
 
-## Test Objective
-Validate that the pressure sensor measures pressure correctly.
+## Objetivo de la Prueba
+Validar que el sensor de presión mide correctamente.
 
-## Preconditions
-- Sensor connected
-- ESP32 powered
+## Precondiciones
+- Sensor conectado
+- ESP32 energizado
+- Firmware cargado
 
-## Expected Results
-Pressure values are displayed correctly.
+## Resultados Esperados
+El sistema debe mostrar valores válidos de presión.
 
-## Actual Results
-Pending
+## Resultados Actuales
+Pendiente
 
-## Evidence
-Pending
+## Evidencia
+Pendiente
 
-## Status
-NOT EXECUTED
+## Estado
+NO EJECUTADO
