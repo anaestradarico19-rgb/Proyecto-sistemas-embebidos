@@ -1,7 +1,7 @@
 # Evaluación Preliminar BME280
 
 ## Motivo
-Debido a inconsistencias detectadas en el BMP280, se evalúa el BME280 como alternativa compatible.
+Se logró solucionar los inconvenientes encontrados anteriormente en el sensor.
 
 ## Compatibilidad
 - Comunicación I2C
@@ -10,4 +10,4 @@ Debido a inconsistencias detectadas en el BMP280, se evalúa el BME280 como alte
 - Compatible con la arquitectura actual del sistema
 
 ## Estado
-Pendiente de validación funcional.
+Descartado
