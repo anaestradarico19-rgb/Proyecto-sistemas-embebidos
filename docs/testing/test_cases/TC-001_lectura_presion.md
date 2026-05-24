@@ -16,7 +16,7 @@ La lectura de presión se muestra correctamente y permanece dentro del rango esp
 HIL/System
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
 PASS
