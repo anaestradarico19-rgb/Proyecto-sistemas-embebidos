@@ -16,7 +16,7 @@ Las lecturas se encuentran dentro del rango permitido.
 HIL/System
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-En validación
+PASS
