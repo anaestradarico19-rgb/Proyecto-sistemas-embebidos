@@ -16,7 +16,6 @@ El sistema ejecuta el autodiagnóstico y registra el resultado correctamente.
 Integration
 
 ## Evidencia
-Pendiente
-
+PASS
 ## Estado
-Pendiente
+PASS
