@@ -16,7 +16,6 @@ Los mensajes UART se visualizan correctamente.
 Integration
 
 ## Evidencia
-Pendiente
-
+PASS
 ## Estado
-Pendiente
+PASS
