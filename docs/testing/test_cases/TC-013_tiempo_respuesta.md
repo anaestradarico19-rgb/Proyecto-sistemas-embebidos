@@ -16,7 +16,6 @@ El sistema actualiza los datos en un tiempo menor o igual a 2 segundos.
 HIL/System
 
 ## Evidencia
-Pendiente
-
+PASS
 ## Estado
-Pendiente
+PASS
