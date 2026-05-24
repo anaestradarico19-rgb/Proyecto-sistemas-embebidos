@@ -16,7 +16,6 @@ El sistema registra correctamente eventos INFO, WARN y ERROR.
 HIL/System
 
 ## Evidencia
-Pendiente
-
+PASS
 ## Estado
-Pendiente
+PASS
