@@ -1,385 +1,679 @@
+/*
+ *  Estación barométrica diferencial — ESP-IDF
+ *  - 2× BME280 (I2C 0x76 "adentro" / 0x77 "afuera")
+ *  - OLED SH1106 128x64 (I2C 0x3C)
+ *  - LED RGB (cátodo común)
+ *  - Buzzer (PWM 2 kHz via LEDC)
+ *  - Botón (silencia buzzer)
+ *  - Consola UART0 para configurar rangos
+ *
+ *  Cableado de cada BME280:
+ *    VCC -> 3V3  |  GND -> GND
+ *    SDA -> GPIO21  |  SCL -> GPIO22
+ *    SDO -> GND  (sensor "adentro", addr 0x76)
+ *    SDO -> 3V3  (sensor "afuera",  addr 0x77)
+ *
+ * @author  Juan Manuel Gómez (Firmware Engineer)
+ * @date    2026
+ */
+
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "esp_log.h"
+#include "freertos/semphr.h"
 #include "driver/i2c.h"
-#include "driver/ledc.h"
 #include "driver/gpio.h"
- 
-// ====================== Configuración de pines ======================
-#define I2C_MASTER_SCL_IO          22
-#define I2C_MASTER_SDA_IO          21
-#define I2C_MASTER_NUM             I2C_NUM_0
-#define I2C_MASTER_FREQ_HZ         400000
-#define OLED_ADDR                   0x3C
-#define OLED_WIDTH                  128
-#define OLED_HEIGHT                 64
-#define OLED_PAGES                  8
- 
-#define BUZZER_GPIO                 25
-#define RGB_RED_GPIO                26
-#define RGB_GREEN_GPIO              27
-#define RGB_BLUE_GPIO               14
- 
-// Botón (activo bajo, pull-up interno)
-#define BUTTON_GPIO                 0
- 
-// Rangos para LED (presión normal)
-#define PRESSURE_LED_MIN            950
-#define PRESSURE_LED_MAX            1050
- 
-// Rangos para BUZZER (presión y temperatura)
-#define PRESSURE_BUZZER_MIN         849
-#define PRESSURE_BUZZER_MAX         851
-#define TEMP_BUZZER_MIN             18.0
-#define TEMP_BUZZER_MAX             23.0
- 
-#define TASK_PERIOD_MS              1000
-#define MUTE_DURATION_MS            15000   // 15 segundos
- 
-static QueueHandle_t sensor_data_queue;
- 
-typedef struct {
-    float pressure;
-    float temperature;
-} sensor_data_t;
- 
-static float sim_pressure = 1013.25;
-static float sim_temperature = 25.0;
- 
-// Tiempo hasta el cual el buzzer debe permanecer silenciado (en ticks)
-static TickType_t mute_until = 0;
- 
-static const char *TAG = "MANOMETER";
- 
-// ====================== Fuente 5x7 ======================
-static const uint8_t font5x7[95][5] = {
-    {0x00,0x00,0x00,0x00,0x00}, // espacio
-    {0x00,0x00,0x5F,0x00,0x00}, // !
-    {0x00,0x07,0x00,0x07,0x00}, // "
-    {0x14,0x7F,0x14,0x7F,0x14}, // #
-    {0x24,0x2A,0x7F,0x2A,0x12}, // $
-    {0x23,0x13,0x08,0x64,0x62}, // %
-    {0x36,0x49,0x55,0x22,0x50}, // &
-    {0x00,0x05,0x03,0x00,0x00}, // '
-    {0x00,0x1C,0x22,0x41,0x00}, // (
-    {0x00,0x41,0x22,0x1C,0x00}, // )
-    {0x14,0x08,0x3E,0x08,0x14}, // *
-    {0x08,0x08,0x3E,0x08,0x08}, // +
-    {0x00,0x50,0x30,0x00,0x00}, // ,
-    {0x08,0x08,0x08,0x08,0x08}, // -
-    {0x00,0x60,0x60,0x00,0x00}, // .
-    {0x20,0x10,0x08,0x04,0x02}, // /
-    {0x3E,0x51,0x49,0x45,0x3E}, // 0
-    {0x00,0x42,0x7F,0x40,0x00}, // 1
-    {0x42,0x61,0x51,0x49,0x46}, // 2
-    {0x21,0x41,0x45,0x4B,0x31}, // 3
-    {0x18,0x14,0x12,0x7F,0x10}, // 4
-    {0x27,0x45,0x45,0x45,0x39}, // 5
-    {0x3C,0x4A,0x49,0x49,0x30}, // 6
-    {0x01,0x71,0x09,0x05,0x03}, // 7
-    {0x36,0x49,0x49,0x49,0x36}, // 8
-    {0x06,0x49,0x49,0x29,0x1E}, // 9
-    {0x00,0x36,0x36,0x00,0x00}, // :
-    {0x00,0x56,0x36,0x00,0x00}, // ;
-    {0x08,0x14,0x22,0x41,0x00}, // <
-    {0x14,0x14,0x14,0x14,0x14}, // =
-    {0x00,0x41,0x22,0x14,0x08}, // >
-    {0x02,0x01,0x51,0x09,0x06}, // ?
-    {0x3E,0x41,0x5D,0x55,0x1E}, // @
-    {0x7E,0x11,0x11,0x11,0x7E}, // A
-    {0x7F,0x49,0x49,0x49,0x36}, // B
-    {0x3E,0x41,0x41,0x41,0x22}, // C
-    {0x7F,0x41,0x41,0x22,0x1C}, // D
-    {0x7F,0x49,0x49,0x49,0x41}, // E
-    {0x7F,0x09,0x09,0x09,0x01}, // F
-    {0x3E,0x41,0x49,0x49,0x3A}, // G
-    {0x7F,0x08,0x08,0x08,0x7F}, // H
-    {0x00,0x41,0x7F,0x41,0x00}, // I
-    {0x20,0x40,0x41,0x3F,0x01}, // J
-    {0x7F,0x08,0x14,0x22,0x41}, // K
-    {0x7F,0x40,0x40,0x40,0x60}, // L
-    {0x7F,0x02,0x0C,0x02,0x7F}, // M
-    {0x7F,0x04,0x08,0x10,0x7F}, // N
-    {0x3E,0x41,0x41,0x41,0x3E}, // O
-    {0x7F,0x09,0x09,0x09,0x06}, // P
-    {0x3E,0x41,0x51,0x21,0x5E}, // Q
-    {0x7F,0x09,0x19,0x29,0x46}, // R
-    {0x46,0x49,0x49,0x49,0x31}, // S
-    {0x01,0x01,0x7F,0x01,0x01}, // T
-    {0x3F,0x40,0x40,0x40,0x3F}, // U
-    {0x1F,0x20,0x40,0x20,0x1F}, // V
-    {0x3F,0x40,0x38,0x40,0x3F}, // W
-    {0x63,0x14,0x08,0x14,0x63}, // X
-    {0x07,0x08,0x70,0x08,0x07}, // Y
-    {0x61,0x51,0x49,0x45,0x43}, // Z
-    {0x00,0x7F,0x41,0x41,0x00}, // [
-    {0x02,0x04,0x08,0x10,0x20}, // backslash
-    {0x00,0x41,0x41,0x7F,0x00}, // ]
-    {0x04,0x02,0x01,0x02,0x04}, // ^
-    {0x40,0x40,0x40,0x40,0x40}, // _
-    {0x00,0x01,0x02,0x04,0x00}, // `
-    {0x20,0x54,0x54,0x54,0x78}, // a
-    {0x7F,0x48,0x44,0x44,0x38}, // b
-    {0x38,0x44,0x44,0x44,0x20}, // c
-    {0x38,0x44,0x44,0x48,0x7F}, // d
-    {0x38,0x54,0x54,0x54,0x18}, // e
-    {0x08,0x7E,0x09,0x01,0x02}, // f
-    {0x0C,0x52,0x52,0x52,0x3E}, // g
-    {0x7F,0x08,0x04,0x04,0x78}, // h
-    {0x00,0x44,0x7D,0x40,0x00}, // i
-    {0x20,0x40,0x44,0x3D,0x00}, // j
-    {0x7F,0x10,0x28,0x44,0x00}, // k
-    {0x00,0x41,0x7F,0x40,0x00}, // l
-    {0x7C,0x04,0x18,0x04,0x78}, // m
-    {0x7C,0x08,0x04,0x04,0x78}, // n
-    {0x38,0x44,0x44,0x44,0x38}, // o
-    {0x7C,0x14,0x14,0x14,0x08}, // p
-    {0x08,0x14,0x14,0x18,0x7C}, // q
-    {0x7C,0x08,0x04,0x04,0x08}, // r
-    {0x48,0x54,0x54,0x54,0x20}, // s
-    {0x04,0x3F,0x44,0x40,0x20}, // t
-    {0x3C,0x40,0x40,0x20,0x7C}, // u
-    {0x1C,0x20,0x40,0x20,0x1C}, // v
-    {0x3C,0x40,0x30,0x40,0x3C}, // w
-    {0x44,0x28,0x10,0x28,0x44}, // x
-    {0x0C,0x50,0x50,0x50,0x3C}, // y
-    {0x44,0x64,0x54,0x4C,0x44}, // z
-    {0x00,0x08,0x36,0x41,0x00}, // {
-    {0x00,0x00,0x7F,0x00,0x00}, // |
-    {0x00,0x41,0x36,0x08,0x00}, // }
-    {0x08,0x04,0x08,0x10,0x08}  // ~
+#include "driver/ledc.h"
+#include "driver/uart.h"
+#include "esp_vfs_dev.h"
+#include "esp_log.h"
+#include "bme280.h"
+
+/* ═══════════════════════════════════════════════
+ *  CONFIGURACIÓN — GPIO Y DIRECCIONES
+ * ═══════════════════════════════════════════════ */
+#define I2C_PORT             I2C_NUM_0
+#define I2C_SDA_GPIO         21
+#define I2C_SCL_GPIO         22
+#define I2C_FREQ_HZ          100000
+
+#define BME_IN_ADDR          0x76   /* SDO → GND  → sensor "adentro" */
+#define BME_OUT_ADDR         0x77   /* SDO → 3V3  → sensor "afuera"  */
+#define OLED_ADDR            0x3C
+
+#define LED_R_GPIO           25
+#define LED_G_GPIO           26
+#define LED_B_GPIO           27
+#define BUZZER_GPIO          18
+#define BUTTON_GPIO          19
+
+#define BUZ_LEDC_TIMER       LEDC_TIMER_0
+#define BUZ_LEDC_CHANNEL     LEDC_CHANNEL_0
+#define BUZ_LEDC_MODE        LEDC_LOW_SPEED_MODE
+#define BUZ_FREQ_HZ          2000
+
+#define DIFF_HYST_HPA        0.30f
+#define UART_CONSOLE_NUM     UART_NUM_0
+#define UART_BAUD            115200
+
+static const char *TAG = "BARO";
+
+/* ═══════════════════════════════════════════════
+ *  ESTADO COMPARTIDO
+ * ═══════════════════════════════════════════════ */
+typedef struct { float p_min, p_max, t_min, t_max; } range_t;
+
+/* Defaults para Medellín ~1500 m */
+static range_t r_in  = { 820.0f, 870.0f, 18.0f, 28.0f };
+static range_t r_out = { 820.0f, 870.0f, 10.0f, 32.0f };
+
+static float in_p = 0, in_t = 0, in_h = 0;
+static float out_p = 0, out_t = 0, out_h = 0;
+static bool  in_ok = false, out_ok = false;
+
+static volatile bool buzzer_silenced = false;
+static volatile bool alarm_active    = false;
+
+static SemaphoreHandle_t i2c_mtx;
+static SemaphoreHandle_t data_mtx;
+static QueueHandle_t     btn_evt_q;
+
+/* ═══════════════════════════════════════════════
+ *  INTERFAZ I2C PARA LIBRERÍA BOSCH BME280
+ * ═══════════════════════════════════════════════ */
+
+/** @brief Escritura I2C requerida por la librería Bosch */
+BME280_INTF_RET_TYPE bme280_i2c_write(uint8_t reg, const uint8_t *data,
+                                       uint32_t len, void *intf_ptr) {
+    uint8_t addr = *(uint8_t *)intf_ptr;
+    uint8_t buf[32];
+    if (len + 1 > sizeof(buf)) return -1;
+    buf[0] = reg;
+    memcpy(buf + 1, data, len);
+    xSemaphoreTake(i2c_mtx, portMAX_DELAY);
+    esp_err_t r = i2c_master_write_to_device(I2C_PORT, addr, buf, len + 1,
+                                              pdMS_TO_TICKS(1000));
+    xSemaphoreGive(i2c_mtx);
+    return (r == ESP_OK) ? BME280_INTF_RET_SUCCESS : -1;
+}
+
+/** @brief Lectura I2C requerida por la librería Bosch */
+BME280_INTF_RET_TYPE bme280_i2c_read(uint8_t reg, uint8_t *data,
+                                      uint32_t len, void *intf_ptr) {
+    uint8_t addr = *(uint8_t *)intf_ptr;
+    xSemaphoreTake(i2c_mtx, portMAX_DELAY);
+    esp_err_t r = i2c_master_write_read_device(I2C_PORT, addr, &reg, 1,
+                                                data, len, pdMS_TO_TICKS(1000));
+    xSemaphoreGive(i2c_mtx);
+    return (r == ESP_OK) ? BME280_INTF_RET_SUCCESS : -1;
+}
+
+/** @brief Delay requerido por la librería Bosch */
+void bme280_delay_us(uint32_t period, void *intf_ptr) {
+    (void)intf_ptr;
+    vTaskDelay(pdMS_TO_TICKS(period / 1000 + 1));
+}
+
+/* ═══════════════════════════════════════════════
+ *  FONT 5×7 ASCII (0x20–0x7E)
+ * ═══════════════════════════════════════════════ */
+static const uint8_t font5x7[][5] = {
+    {0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5F,0x00,0x00},
+    {0x00,0x07,0x00,0x07,0x00},{0x14,0x7F,0x14,0x7F,0x14},
+    {0x24,0x2A,0x7F,0x2A,0x12},{0x23,0x13,0x08,0x64,0x62},
+    {0x36,0x49,0x55,0x22,0x50},{0x00,0x05,0x03,0x00,0x00},
+    {0x00,0x1C,0x22,0x41,0x00},{0x00,0x41,0x22,0x1C,0x00},
+    {0x08,0x2A,0x1C,0x2A,0x08},{0x08,0x08,0x3E,0x08,0x08},
+    {0x00,0x50,0x30,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},
+    {0x00,0x60,0x60,0x00,0x00},{0x20,0x10,0x08,0x04,0x02},
+    {0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},
+    {0x42,0x61,0x51,0x49,0x46},{0x21,0x41,0x45,0x4B,0x31},
+    {0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},
+    {0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},
+    {0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E},
+    {0x00,0x36,0x36,0x00,0x00},{0x00,0x56,0x36,0x00,0x00},
+    {0x00,0x08,0x14,0x22,0x41},{0x14,0x14,0x14,0x14,0x14},
+    {0x41,0x22,0x14,0x08,0x00},{0x02,0x01,0x51,0x09,0x06},
+    {0x32,0x49,0x79,0x41,0x3E},{0x7E,0x11,0x11,0x11,0x7E},
+    {0x7F,0x49,0x49,0x49,0x36},{0x3E,0x41,0x41,0x41,0x22},
+    {0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},
+    {0x7F,0x09,0x09,0x01,0x01},{0x3E,0x41,0x41,0x51,0x32},
+    {0x7F,0x08,0x08,0x08,0x7F},{0x00,0x41,0x7F,0x41,0x00},
+    {0x20,0x40,0x41,0x3F,0x01},{0x7F,0x08,0x14,0x22,0x41},
+    {0x7F,0x40,0x40,0x40,0x40},{0x7F,0x02,0x04,0x02,0x7F},
+    {0x7F,0x04,0x08,0x10,0x7F},{0x3E,0x41,0x41,0x41,0x3E},
+    {0x7F,0x09,0x09,0x09,0x06},{0x3E,0x41,0x51,0x21,0x5E},
+    {0x7F,0x09,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},
+    {0x01,0x01,0x7F,0x01,0x01},{0x3F,0x40,0x40,0x40,0x3F},
+    {0x1F,0x20,0x40,0x20,0x1F},{0x7F,0x20,0x18,0x20,0x7F},
+    {0x63,0x14,0x08,0x14,0x63},{0x03,0x04,0x78,0x04,0x03},
+    {0x61,0x51,0x49,0x45,0x43},{0x00,0x00,0x7F,0x41,0x41},
+    {0x02,0x04,0x08,0x10,0x20},{0x41,0x41,0x7F,0x00,0x00},
+    {0x04,0x02,0x01,0x02,0x04},{0x40,0x40,0x40,0x40,0x40},
+    {0x00,0x01,0x02,0x04,0x00},{0x20,0x54,0x54,0x54,0x78},
+    {0x7F,0x48,0x44,0x44,0x38},{0x38,0x44,0x44,0x44,0x20},
+    {0x38,0x44,0x44,0x48,0x7F},{0x38,0x54,0x54,0x54,0x18},
+    {0x08,0x7E,0x09,0x01,0x02},{0x08,0x14,0x54,0x54,0x3C},
+    {0x7F,0x08,0x04,0x04,0x78},{0x00,0x44,0x7D,0x40,0x00},
+    {0x20,0x40,0x44,0x3D,0x00},{0x00,0x7F,0x10,0x28,0x44},
+    {0x00,0x41,0x7F,0x40,0x00},{0x7C,0x04,0x18,0x04,0x78},
+    {0x7C,0x08,0x04,0x04,0x78},{0x38,0x44,0x44,0x44,0x38},
+    {0x7C,0x14,0x14,0x14,0x08},{0x08,0x14,0x14,0x18,0x7C},
+    {0x7C,0x08,0x04,0x04,0x08},{0x48,0x54,0x54,0x54,0x20},
+    {0x04,0x3F,0x44,0x40,0x20},{0x3C,0x40,0x40,0x20,0x7C},
+    {0x1C,0x20,0x40,0x20,0x1C},{0x3C,0x40,0x30,0x40,0x3C},
+    {0x44,0x28,0x10,0x28,0x44},{0x0C,0x50,0x50,0x50,0x3C},
+    {0x44,0x64,0x54,0x4C,0x44},{0x00,0x08,0x36,0x41,0x00},
+    {0x00,0x00,0x7F,0x00,0x00},{0x00,0x41,0x36,0x08,0x00},
+    {0x02,0x01,0x02,0x04,0x02},
 };
- 
-// ====================== I2C y OLED ======================
-static void i2c_master_init(void) {
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_MASTER_SDA_IO,
-        .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+
+/* ═══════════════════════════════════════════════
+ *  DRIVER SH1106 128×64
+ * ═══════════════════════════════════════════════ */
+#define SH1106_W      128
+#define SH1106_PAGES  8
+#define SH1106_COL_OF 2
+
+static uint8_t oled_fb[SH1106_W * SH1106_PAGES];
+
+static void sh1106_cmd(uint8_t c) {
+    uint8_t b[2] = { 0x00, c };
+    xSemaphoreTake(i2c_mtx, portMAX_DELAY);
+    i2c_master_write_to_device(I2C_PORT, OLED_ADDR, b, 2, pdMS_TO_TICKS(100));
+    xSemaphoreGive(i2c_mtx);
+}
+
+static void sh1106_init(void) {
+    static const uint8_t seq[] = {
+        0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40,
+        0xAD, 0x8B, 0xA1, 0xC8, 0xDA, 0x12, 0x81, 0x80,
+        0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6, 0xAF
     };
-    ESP_ERROR_CHECK(i2c_param_config(I2C_MASTER_NUM, &conf));
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0));
+    for (size_t i = 0; i < sizeof(seq); i++) sh1106_cmd(seq[i]);
+    ESP_LOGI(TAG, "OLED SH1106 inicializado (0x3C)");
 }
- 
-static void oled_write_cmd(uint8_t cmd) {
-    uint8_t buf[2] = {0x00, cmd};
-    i2c_master_write_to_device(I2C_MASTER_NUM, OLED_ADDR, buf, 2, pdMS_TO_TICKS(100));
-}
- 
-static void oled_write_data(uint8_t data) {
-    uint8_t buf[2] = {0x40, data};
-    i2c_master_write_to_device(I2C_MASTER_NUM, OLED_ADDR, buf, 2, pdMS_TO_TICKS(100));
-}
- 
-static void oled_init(void) {
-    vTaskDelay(pdMS_TO_TICKS(50));
-    oled_write_cmd(0xAE); oled_write_cmd(0xD5); oled_write_cmd(0x80);
-    oled_write_cmd(0xA8); oled_write_cmd(0x3F); oled_write_cmd(0xD3); oled_write_cmd(0x00);
-    oled_write_cmd(0x40); oled_write_cmd(0x8D); oled_write_cmd(0x14);
-    oled_write_cmd(0x20); oled_write_cmd(0x00); oled_write_cmd(0xA1); oled_write_cmd(0xC8);
-    oled_write_cmd(0xDA); oled_write_cmd(0x12); oled_write_cmd(0x81); oled_write_cmd(0xCF);
-    oled_write_cmd(0xD9); oled_write_cmd(0xF1); oled_write_cmd(0xDB); oled_write_cmd(0x40);
-    oled_write_cmd(0xA4); oled_write_cmd(0xA6); oled_write_cmd(0xAF);
-}
- 
-static void oled_clear(void) {
-    for (int page = 0; page < OLED_PAGES; page++) {
-        oled_write_cmd(0xB0 + page);
-        oled_write_cmd(0x00);
-        oled_write_cmd(0x10);
-        for (int i = 0; i < OLED_WIDTH; i++) oled_write_data(0x00);
+
+static void sh1106_clear(void) { memset(oled_fb, 0, sizeof(oled_fb)); }
+
+static void sh1106_update(void) {
+    for (int page = 0; page < SH1106_PAGES; page++) {
+        sh1106_cmd(0xB0 | page);
+        sh1106_cmd(0x00 | (SH1106_COL_OF & 0x0F));
+        sh1106_cmd(0x10 | ((SH1106_COL_OF >> 4) & 0x0F));
+        uint8_t buf[1 + SH1106_W];
+        buf[0] = 0x40;
+        memcpy(&buf[1], &oled_fb[page * SH1106_W], SH1106_W);
+        xSemaphoreTake(i2c_mtx, portMAX_DELAY);
+        i2c_master_write_to_device(I2C_PORT, OLED_ADDR, buf, sizeof(buf),
+                                    pdMS_TO_TICKS(100));
+        xSemaphoreGive(i2c_mtx);
     }
 }
- 
-static void oled_draw_char(char c, uint8_t x, uint8_t page) {
-    if (c < 32 || c > 126) c = '?';
-    const uint8_t *glyph = font5x7[c - 32];
-    if (x > OLED_WIDTH - 6) return;
-    oled_write_cmd(0xB0 + page);
-    oled_write_cmd(x & 0x0F);
-    oled_write_cmd(0x10 | (x >> 4));
-    for (int i = 0; i < 5; i++) oled_write_data(glyph[i]);
-    oled_write_data(0x00);
+
+static void sh1106_draw_char(int x, int page, char c) {
+    if (c < 0x20 || c > 0x7E) c = '?';
+    if (x < 0 || x + 5 >= SH1106_W || page < 0 || page > 7) return;
+    const uint8_t *g = font5x7[c - 0x20];
+    for (int i = 0; i < 5; i++) oled_fb[page * SH1106_W + x + i] = g[i];
+    oled_fb[page * SH1106_W + x + 5] = 0x00;
 }
- 
-static void oled_draw_string(const char *str, uint8_t x, uint8_t page) {
-    while (*str && x < OLED_WIDTH - 5) {
-        oled_draw_char(*str, x, page);
-        x += 6; str++;
-    }
+
+static void sh1106_draw_str(int x, int page, const char *s) {
+    while (*s) { sh1106_draw_char(x, page, *s++); x += 6; }
 }
- 
-static void oled_display(float pressure, float temp) {
-    oled_clear();
-    oled_draw_string("MANOMETER", 25, 0);
-    char line[20];
-    snprintf(line, sizeof(line), "PRES: %.1f hPa", pressure);
-    oled_draw_string(line, 5, 2);
-    snprintf(line, sizeof(line), "TEMP: %.1f C", temp);
-    oled_draw_string(line, 5, 4);
-}
- 
-// ====================== Buzzer y LED RGB ======================
-static void buzzer_init(void) {
-    gpio_config_t io = { .pin_bit_mask = (1ULL<<BUZZER_GPIO), .mode = GPIO_MODE_OUTPUT };
-    gpio_config(&io);
-    gpio_set_level(BUZZER_GPIO, 0);
-}
-static void buzzer_set(bool on) { gpio_set_level(BUZZER_GPIO, on); }
- 
-#define LEDC_TIMER LEDC_TIMER_0
-#define LEDC_MODE LEDC_LOW_SPEED_MODE
-#define LEDC_RESOLUTION LEDC_TIMER_8_BIT
-#define LEDC_FREQ 5000
- 
+
+/* ═══════════════════════════════════════════════
+ *  LED RGB (cátodo común)
+ * ═══════════════════════════════════════════════ */
 static void rgb_init(void) {
-    ledc_timer_config_t timer = { .speed_mode = LEDC_MODE, .duty_resolution = LEDC_RESOLUTION, .timer_num = LEDC_TIMER, .freq_hz = LEDC_FREQ };
-    ledc_timer_config(&timer);
-    ledc_channel_config_t ch_r = { .gpio_num = RGB_RED_GPIO, .speed_mode = LEDC_MODE, .channel = LEDC_CHANNEL_0, .timer_sel = LEDC_TIMER, .duty = 0 };
-    ledc_channel_config(&ch_r);
-    ledc_channel_config_t ch_g = { .gpio_num = RGB_GREEN_GPIO, .speed_mode = LEDC_MODE, .channel = LEDC_CHANNEL_1, .timer_sel = LEDC_TIMER, .duty = 0 };
-    ledc_channel_config(&ch_g);
-    ledc_channel_config_t ch_b = { .gpio_num = RGB_BLUE_GPIO, .speed_mode = LEDC_MODE, .channel = LEDC_CHANNEL_2, .timer_sel = LEDC_TIMER, .duty = 0 };
-    ledc_channel_config(&ch_b);
-}
-static void rgb_set(uint8_t r, uint8_t g, uint8_t b) {
-    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, r); ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0);
-    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_1, g); ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_1);
-    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, b); ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2);
-}
-static void rgb_update_led(bool ok) { rgb_set(ok ? 0 : 255, ok ? 255 : 0, 0); }
- 
-// ====================== Botón (silencia 15 segundos) ======================
-static void button_init(void) {
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << BUTTON_GPIO),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
+    gpio_config_t io = {
+        .pin_bit_mask = (1ULL<<LED_R_GPIO)|(1ULL<<LED_G_GPIO)|(1ULL<<LED_B_GPIO),
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE
     };
-    gpio_config(&io_conf);
+    gpio_config(&io);
 }
- 
-static void button_task(void *pvParameters) {
-    uint32_t last_stable = 0;
-    bool last_reading = true;      // true = no presionado
-    const uint32_t debounce_ms = 50;
- 
+
+/**
+ * @brief Actualiza el LED RGB según la diferencia de presión.
+ *        ROJO: adentro > afuera | AZUL: afuera > adentro
+ *        VERDE: presiones iguales | APAGADO: sensor desconectado
+ */
+static void rgb_set(int r, int g, int b) {
+    gpio_set_level(LED_R_GPIO, r ? 1 : 0);
+    gpio_set_level(LED_G_GPIO, g ? 1 : 0);
+    gpio_set_level(LED_B_GPIO, b ? 1 : 0);
+}
+
+/* ═══════════════════════════════════════════════
+ *  BUZZER (PWM 2 kHz via LEDC)
+ * ═══════════════════════════════════════════════ */
+static void buzzer_init(void) {
+    ledc_timer_config_t t = {
+        .speed_mode      = BUZ_LEDC_MODE,
+        .duty_resolution = LEDC_TIMER_10_BIT,
+        .timer_num       = BUZ_LEDC_TIMER,
+        .freq_hz         = BUZ_FREQ_HZ,
+        .clk_cfg         = LEDC_AUTO_CLK
+    };
+    ledc_timer_config(&t);
+    ledc_channel_config_t ch = {
+        .gpio_num   = BUZZER_GPIO,
+        .speed_mode = BUZ_LEDC_MODE,
+        .channel    = BUZ_LEDC_CHANNEL,
+        .timer_sel  = BUZ_LEDC_TIMER,
+        .duty       = 0,
+        .hpoint     = 0
+    };
+    ledc_channel_config(&ch);
+}
+
+static void buzzer_on(void) {
+    ledc_set_duty(BUZ_LEDC_MODE, BUZ_LEDC_CHANNEL, 512);
+    ledc_update_duty(BUZ_LEDC_MODE, BUZ_LEDC_CHANNEL);
+}
+
+static void buzzer_off(void) {
+    ledc_set_duty(BUZ_LEDC_MODE, BUZ_LEDC_CHANNEL, 0);
+    ledc_update_duty(BUZ_LEDC_MODE, BUZ_LEDC_CHANNEL);
+}
+
+/* ═══════════════════════════════════════════════
+ *  BOTÓN — ISR + debounce
+ * ═══════════════════════════════════════════════ */
+static void IRAM_ATTR btn_isr(void *arg) {
+    (void)arg;
+    uint32_t v = 1;
+    xQueueSendFromISR(btn_evt_q, &v, NULL);
+}
+
+static void button_init(void) {
+    gpio_config_t io = {
+        .pin_bit_mask = 1ULL << BUTTON_GPIO,
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_ENABLE,
+        .intr_type    = GPIO_INTR_NEGEDGE
+    };
+    gpio_config(&io);
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(BUTTON_GPIO, btn_isr, NULL);
+}
+
+static void button_task(void *arg) {
+    (void)arg;
+    uint32_t evt;
     while (1) {
-        bool raw = gpio_get_level(BUTTON_GPIO);
-        static bool last_raw = true;
-        uint32_t now = xTaskGetTickCount();
- 
-        if (raw != last_raw) {
-            last_stable = now;
-            last_raw = raw;
-        }
- 
-        if ((now - last_stable) >= pdMS_TO_TICKS(debounce_ms)) {
-            bool pressed = (raw == 0);  // activo bajo
-            if (pressed != last_reading) {
-                last_reading = pressed;
-                if (pressed) {
-                    // Flanco de bajada: botón presionado → activar mute por 15 s
-                    mute_until = xTaskGetTickCount() + pdMS_TO_TICKS(MUTE_DURATION_MS);
-                    ESP_LOGI(TAG, "Buzzer silenciado por %d ms", MUTE_DURATION_MS);
+        if (xQueueReceive(btn_evt_q, &evt, portMAX_DELAY)) {
+            vTaskDelay(pdMS_TO_TICKS(40));
+            if (gpio_get_level(BUTTON_GPIO) == 0) {
+                if (alarm_active) {
+                    buzzer_silenced = true;
+                    buzzer_off();
+                    ESP_LOGI(TAG, "Boton -> buzzer silenciado");
                 }
-                // No hacemos nada al soltar el botón
+                vTaskDelay(pdMS_TO_TICKS(200));
+                xQueueReset(btn_evt_q);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
- 
-// ====================== Tareas principales ======================
-static void sensor_simulation_task(void *pvParameters) {
-    sensor_data_t data;
-    TickType_t last = xTaskGetTickCount();
+
+/* ═══════════════════════════════════════════════
+ *  INICIALIZACIÓN BME280
+ * ═══════════════════════════════════════════════ */
+
+/**
+ * @brief Inicializa un sensor BME280 con la librería Bosch.
+ * @param d        Puntero a la estructura del sensor.
+ * @param addr_ptr Puntero a la dirección I2C del sensor.
+ * @return BME280_OK si exitoso, código de error si falla.
+ */
+static int8_t setup_bme(struct bme280_dev *d, uint8_t *addr_ptr) {
+    d->intf     = BME280_I2C_INTF;
+    d->intf_ptr = addr_ptr;
+    d->read     = bme280_i2c_read;
+    d->write    = bme280_i2c_write;
+    d->delay_us = bme280_delay_us;
+
+    int8_t r = bme280_init(d);
+    if (r != BME280_OK) return r;
+
+    struct bme280_settings s;
+    s.osr_h        = BME280_OVERSAMPLING_1X;
+    s.osr_p        = BME280_OVERSAMPLING_1X;
+    s.osr_t        = BME280_OVERSAMPLING_1X;
+    s.filter       = BME280_FILTER_COEFF_OFF;
+    s.standby_time = BME280_STANDBY_TIME_1000_MS;
+    uint8_t sel = BME280_SEL_OSR_PRESS | BME280_SEL_OSR_TEMP |
+                  BME280_SEL_OSR_HUM   | BME280_SEL_FILTER   |
+                  BME280_SEL_STANDBY;
+    bme280_set_sensor_settings(sel, &s, d);
+    return bme280_set_sensor_mode(BME280_POWERMODE_NORMAL, d);
+}
+
+/* ═══════════════════════════════════════════════
+ *  TAREA DE SENSORES — lee ambos BME280 a 1 Hz
+ * ═══════════════════════════════════════════════ */
+static void sensor_task(void *arg) {
+    (void)arg;
+    struct bme280_dev dev_in, dev_out;
+    uint8_t addr_in = BME_IN_ADDR, addr_out = BME_OUT_ADDR;
+
+    bool init_in_ok  = (setup_bme(&dev_in,  &addr_in)  == BME280_OK);
+    bool init_out_ok = (setup_bme(&dev_out, &addr_out) == BME280_OK);
+
+    /* Log solo de inicialización — no datos continuos */
+    ESP_LOGI(TAG, "BME280 ADENTRO (0x%02X): %s", BME_IN_ADDR,
+             init_in_ok ? "OK" : "ERR_SENSOR_DISCONNECT");
+    ESP_LOGI(TAG, "BME280 AFUERA  (0x%02X): %s", BME_OUT_ADDR,
+             init_out_ok ? "OK" : "ERR_SENSOR_DISCONNECT");
+
+    int retry_cnt = 0;
+    struct bme280_data d;
+
     while (1) {
-        data.pressure = sim_pressure;
-        data.temperature = sim_temperature;
-        bool pressure_ok = (data.pressure >= PRESSURE_LED_MIN && data.pressure <= PRESSURE_LED_MAX);
-        bool buzz_p = (data.pressure < PRESSURE_BUZZER_MIN || data.pressure > PRESSURE_BUZZER_MAX);
-        bool buzz_t = (data.temperature < TEMP_BUZZER_MIN || data.temperature > TEMP_BUZZER_MAX);
-        bool buzz = buzz_p || buzz_t;
- 
-        // Determinar si el buzzer debe sonar según lógica normal y mute temporizado
-        bool buzzer_enable = false;
-        if (buzz) {
-            TickType_t now = xTaskGetTickCount();
-            if (now >= mute_until) {
-                buzzer_enable = true;   // mute expirado y aún hay alarma
-            } else {
-                buzzer_enable = false;  // dentro del período de mute
+        /* Reconexión automática cada 5 ciclos (RF-12) */
+        if (!init_in_ok && (retry_cnt % 5) == 0) {
+            if (setup_bme(&dev_in, &addr_in) == BME280_OK) {
+                init_in_ok = true;
+                ESP_LOGI(TAG, "BME280 ADENTRO reconectado");
+            }
+        }
+        if (!init_out_ok && (retry_cnt % 5) == 0) {
+            if (setup_bme(&dev_out, &addr_out) == BME280_OK) {
+                init_out_ok = true;
+                ESP_LOGI(TAG, "BME280 AFUERA reconectado");
+            }
+        }
+        retry_cnt++;
+
+        /* Leer sensor ADENTRO */
+        if (init_in_ok && bme280_get_sensor_data(BME280_ALL, &d, &dev_in) == BME280_OK) {
+            float p = d.pressure / 100.0f;
+            xSemaphoreTake(data_mtx, portMAX_DELAY);
+            in_p = p; in_t = d.temperature; in_h = d.humidity;
+            in_ok = (p >= 300.0f && p <= 1100.0f);
+            xSemaphoreGive(data_mtx);
+        } else {
+            xSemaphoreTake(data_mtx, portMAX_DELAY);
+            in_ok = false;
+            init_in_ok = false;
+            xSemaphoreGive(data_mtx);
+            ESP_LOGE(TAG, "ERR_SENSOR_TIMEOUT — BME280 ADENTRO");
+        }
+
+        /* Leer sensor AFUERA */
+        if (init_out_ok && bme280_get_sensor_data(BME280_ALL, &d, &dev_out) == BME280_OK) {
+            float p = d.pressure / 100.0f;
+            xSemaphoreTake(data_mtx, portMAX_DELAY);
+            out_p = p; out_t = d.temperature; out_h = d.humidity;
+            out_ok = (p >= 300.0f && p <= 1100.0f);
+            xSemaphoreGive(data_mtx);
+        } else {
+            xSemaphoreTake(data_mtx, portMAX_DELAY);
+            out_ok = false;
+            init_out_ok = false;
+            xSemaphoreGive(data_mtx);
+            ESP_LOGE(TAG, "ERR_SENSOR_TIMEOUT — BME280 AFUERA");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+/* ═══════════════════════════════════════════════
+ *  TAREA DE CONTROL — RGB y buzzer
+ * ═══════════════════════════════════════════════ */
+static void control_task(void *arg) {
+    (void)arg;
+    while (1) {
+        xSemaphoreTake(data_mtx, portMAX_DELAY);
+        bool  oi = in_ok,  oo = out_ok;
+        float pi = in_p,   po = out_p;
+        float ti = in_t,   to = out_t;
+        range_t ri = r_in, ro = r_out;
+        xSemaphoreGive(data_mtx);
+
+        /* LED RGB según diferencia de presión */
+        if (!oi || !oo) {
+            rgb_set(0, 0, 0);   /* Apagado — sensor desconectado */
+        } else {
+            float diff = pi - po;
+            if      (diff >  DIFF_HYST_HPA) rgb_set(1, 0, 0);  /* ROJO  — adentro > afuera */
+            else if (diff < -DIFF_HYST_HPA) rgb_set(0, 0, 1);  /* AZUL  — afuera > adentro */
+            else                            rgb_set(0, 1, 0);  /* VERDE — presiones iguales */
+        }
+
+        /* Buzzer: activa si algún sensor está fuera del rango configurado */
+        bool out_of_range = false;
+        if (oi) {
+            out_of_range |= (pi < ri.p_min || pi > ri.p_max);
+            out_of_range |= (ti < ri.t_min || ti > ri.t_max);
+        }
+        if (oo) {
+            out_of_range |= (po < ro.p_min || po > ro.p_max);
+            out_of_range |= (to < ro.t_min || to > ro.t_max);
+        }
+
+        if (out_of_range) {
+            alarm_active = true;
+            if (!buzzer_silenced) {
+                buzzer_on();
             }
         } else {
-            buzzer_enable = false;      // sin condición de alarma
+            alarm_active    = false;
+            buzzer_silenced = false;
+            buzzer_off();
         }
- 
-        rgb_update_led(pressure_ok);
-        buzzer_set(buzzer_enable);
- 
-        xQueueSend(sensor_data_queue, &data, 0);
-        printf("P=%.2f hPa  T=%.2f C\r\n", data.pressure, data.temperature);
+
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
+
+/* ═══════════════════════════════════════════════
+ *  TAREA DEL DISPLAY — refresca OLED 2 veces/s
+ * ═══════════════════════════════════════════════ */
+static void display_task(void *arg) {
+    (void)arg;
+    char line[24];
+    while (1) {
+        xSemaphoreTake(data_mtx, portMAX_DELAY);
+        bool  oi = in_ok,  oo = out_ok;
+        float pi = in_p,   po = out_p;
+        float ti = in_t,   to = out_t;
+        float hi = in_h,   ho = out_h;
+        xSemaphoreGive(data_mtx);
+
+        sh1106_clear();
+        sh1106_draw_str(0, 0, "BARO DIFERENCIAL");
+
+        /* Indicador de diferencia */
+        if (oi && oo) {
+            float diff = pi - po;
+            if      (diff >  DIFF_HYST_HPA) snprintf(line, sizeof(line), "IN>OUT %+.2f hPa", diff);
+            else if (diff < -DIFF_HYST_HPA) snprintf(line, sizeof(line), "IN<OUT %+.2f hPa", diff);
+            else                            snprintf(line, sizeof(line), "IN=OUT %+.2f hPa", diff);
+        } else {
+            snprintf(line, sizeof(line), "SENSOR ERROR");
+        }
+        sh1106_draw_str(0, 1, line);
+
+        /* Datos ADENTRO */
+        sh1106_draw_str(0, 3, "ADENTRO:");
+        if (oi) {
+            snprintf(line, sizeof(line), "%6.2fhPa", pi);
+            sh1106_draw_str(54, 3, line);
+            snprintf(line, sizeof(line), "T:%.1fC H:%.1f%%", ti, hi);
+            sh1106_draw_str(0, 4, line);
+        } else {
+            sh1106_draw_str(54, 3, "--ERR--");
+        }
+
+        /* Datos AFUERA */
+        sh1106_draw_str(0, 6, "AFUERA:");
+        if (oo) {
+            snprintf(line, sizeof(line), "%6.2fhPa", po);
+            sh1106_draw_str(54, 6, line);
+            snprintf(line, sizeof(line), "T:%.1fC H:%.1f%%", to, ho);
+            sh1106_draw_str(0, 7, line);
+        } else {
+            sh1106_draw_str(54, 6, "--ERR--");
+        }
+
+        sh1106_update();
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+/* ═══════════════════════════════════════════════
+ *  TAREA DE CONSOLA UART
+ * ═══════════════════════════════════════════════ */
+static void print_help(void) {
+    printf("\n=== Manometro Diferencial — Comandos ===\n");
+    printf("  set in  <Pmin> <Pmax> <Tmin> <Tmax>   Rango ADENTRO\n");
+    printf("  set out <Pmin> <Pmax> <Tmin> <Tmax>   Rango AFUERA\n");
+    printf("  show                                  Muestra rangos actuales\n");
+    printf("  mute                                  Silencia el buzzer\n");
+    printf("  help                                  Muestra esta ayuda\n");
+    printf("Ejemplo: set in 825 865 18 26\n");
+    printf("=========================================\n\n");
+}
+
+static void console_task(void *arg) {
+    (void)arg;
+    char line[128];
+    print_help();
+    while (1) {
+        printf("> ");
         fflush(stdout);
- 
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(TASK_PERIOD_MS));
-    }
-}
- 
-static void display_task(void *pvParameters) {
-    sensor_data_t data;
-    while (1) {
-        if (xQueueReceive(sensor_data_queue, &data, portMAX_DELAY))
-            oled_display(data.pressure, data.temperature);
-    }
-}
- 
-static void uart_command_task(void *pvParameters) {
-    char line[32];
-    printf("\r\nSistema listo. Comandos: set_pressure <hPa>   set_temp <°C>\r\n");
-    while (1) {
-        if (fgets(line, sizeof(line), stdin) != NULL) {
-            line[strcspn(line, "\r\n")] = '\0';
-            if (strlen(line) == 0) continue;
-            float val;
-            if (strncmp(line, "set_pressure ", 13) == 0 && sscanf(line + 13, "%f", &val) == 1) {
-                sim_pressure = val;
-                ESP_LOGI(TAG, "Presión manual = %.2f hPa", sim_pressure);
-            } else if (strncmp(line, "set_temp ", 9) == 0 && sscanf(line + 9, "%f", &val) == 1) {
-                sim_temperature = val;
-                ESP_LOGI(TAG, "Temperatura manual = %.2f C", sim_temperature);
-            } else if (strcmp(line, "help") == 0) {
-                printf("Comandos:\r\n  set_pressure <hPa>\r\n  set_temp <°C>\r\n");
-            } else if (strlen(line) > 0) {
-                printf("Comando no reconocido. Use 'help'\r\n");
-            }
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        size_t l = strlen(line);
+        while (l > 0 && (line[l-1] == '\n' || line[l-1] == '\r')) line[--l] = 0;
+        if (l == 0) continue;
+
+        if (strncmp(line, "set in", 6) == 0) {
+            float pmin, pmax, tmin, tmax;
+            if (sscanf(line + 6, "%f %f %f %f", &pmin, &pmax, &tmin, &tmax) == 4
+                && pmin < pmax && tmin < tmax) {
+                xSemaphoreTake(data_mtx, portMAX_DELAY);
+                r_in.p_min = pmin; r_in.p_max = pmax;
+                r_in.t_min = tmin; r_in.t_max = tmax;
+                xSemaphoreGive(data_mtx);
+                printf("OK ADENTRO: P[%.2f, %.2f] hPa  T[%.2f, %.2f] C\n",
+                       pmin, pmax, tmin, tmax);
+            } else {
+                printf("Uso: set in <Pmin> <Pmax> <Tmin> <Tmax>\n");
+            }
+        } else if (strncmp(line, "set out", 7) == 0) {
+            float pmin, pmax, tmin, tmax;
+            if (sscanf(line + 7, "%f %f %f %f", &pmin, &pmax, &tmin, &tmax) == 4
+                && pmin < pmax && tmin < tmax) {
+                xSemaphoreTake(data_mtx, portMAX_DELAY);
+                r_out.p_min = pmin; r_out.p_max = pmax;
+                r_out.t_min = tmin; r_out.t_max = tmax;
+                xSemaphoreGive(data_mtx);
+                printf("OK AFUERA: P[%.2f, %.2f] hPa  T[%.2f, %.2f] C\n",
+                       pmin, pmax, tmin, tmax);
+            } else {
+                printf("Uso: set out <Pmin> <Pmax> <Tmin> <Tmax>\n");
+            }
+        } else if (strcmp(line, "show") == 0) {
+            xSemaphoreTake(data_mtx, portMAX_DELAY);
+            range_t a = r_in, b = r_out;
+            xSemaphoreGive(data_mtx);
+            printf("ADENTRO: P[%.2f, %.2f] hPa  T[%.2f, %.2f] C\n",
+                   a.p_min, a.p_max, a.t_min, a.t_max);
+            printf("AFUERA:  P[%.2f, %.2f] hPa  T[%.2f, %.2f] C\n",
+                   b.p_min, b.p_max, b.t_min, b.t_max);
+        } else if (strcmp(line, "mute") == 0) {
+            buzzer_silenced = true;
+            buzzer_off();
+            printf("Buzzer silenciado.\n");
+        } else if (strcmp(line, "help") == 0) {
+            print_help();
+        } else {
+            printf("Comando desconocido. Escriba 'help'.\n");
+        }
     }
 }
- 
+
+static void console_uart_init(void) {
+    setvbuf(stdin,  NULL, _IONBF, 0);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    esp_vfs_dev_uart_port_set_rx_line_endings(UART_CONSOLE_NUM, ESP_LINE_ENDINGS_CR);
+    esp_vfs_dev_uart_port_set_tx_line_endings(UART_CONSOLE_NUM, ESP_LINE_ENDINGS_CRLF);
+    const uart_config_t cfg = {
+        .baud_rate  = UART_BAUD,
+        .data_bits  = UART_DATA_8_BITS,
+        .parity     = UART_PARITY_DISABLE,
+        .stop_bits  = UART_STOP_BITS_1,
+        .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    uart_driver_install(UART_CONSOLE_NUM, 256, 0, 0, NULL, 0);
+    uart_param_config(UART_CONSOLE_NUM, &cfg);
+    esp_vfs_dev_uart_use_driver(UART_CONSOLE_NUM);
+    uart_set_line_inverse(UART_CONSOLE_NUM, UART_SIGNAL_INV_DISABLE);
+}
+
+/* ═══════════════════════════════════════════════
+ *  APP MAIN
+ * ═══════════════════════════════════════════════ */
 void app_main(void) {
-    ESP_LOGI(TAG, "=== MANÓMETRO CON BOTÓN (MUTE 15s) ===");
-    i2c_master_init();
-    oled_init();
-    buzzer_init();
-    rgb_init();
+    ESP_LOGI(TAG, "=== MANOMETRO DIFERENCIAL HOSPITALARIO v2.0 ===");
+    ESP_LOGI(TAG, "=== AUTODIAGNOSTICO INICIANDO ===");
+
+    /* Semáforos y colas */
+    i2c_mtx   = xSemaphoreCreateMutex();
+    data_mtx  = xSemaphoreCreateMutex();
+    btn_evt_q = xQueueCreate(8, sizeof(uint32_t));
+
+    /* I2C */
+    i2c_config_t conf = {
+        .mode             = I2C_MODE_MASTER,
+        .sda_io_num       = I2C_SDA_GPIO,
+        .scl_io_num       = I2C_SCL_GPIO,
+        .sda_pullup_en    = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en    = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_FREQ_HZ,
+    };
+    i2c_param_config(I2C_PORT, &conf);
+    i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    ESP_LOGI(TAG, "I2C OK (SDA=%d SCL=%d %dHz)", I2C_SDA_GPIO, I2C_SCL_GPIO, I2C_FREQ_HZ);
+
+    /* Periféricos */
+    rgb_init();    rgb_set(0, 0, 0);
+    buzzer_init(); buzzer_off();
     button_init();
- 
-    sensor_data_queue = xQueueCreate(5, sizeof(sensor_data_t));
- 
-    xTaskCreate(sensor_simulation_task, "sim", 4096, NULL, 5, NULL);
-    xTaskCreate(display_task, "disp", 4096, NULL, 4, NULL);
-    xTaskCreate(uart_command_task, "cmd", 4096, NULL, 3, NULL);
-    xTaskCreate(button_task, "btn", 2048, NULL, 2, NULL);
- 
-    ESP_LOGI(TAG, "Sistema listo. Pulse el botón (GPIO0) para silenciar el buzzer 15 segundos.");
+
+    /* OLED */
+    sh1106_init();
+    sh1106_clear();
+    sh1106_draw_str(0, 0, "BARO DIFERENCIAL");
+    sh1106_draw_str(0, 2, "Iniciando...");
+    sh1106_update();
+
+    /* Consola UART */
+    console_uart_init();
+
+    ESP_LOGI(TAG, "=== AUTODIAGNOSTICO COMPLETO ===");
+
+    /* Tareas FreeRTOS */
+    xTaskCreate(sensor_task,  "sensor",  4096, NULL, 5, NULL);
+    xTaskCreate(display_task, "display", 4096, NULL, 4, NULL);
+    xTaskCreate(control_task, "control", 4096, NULL, 5, NULL);
+    xTaskCreate(button_task,  "button",  2048, NULL, 6, NULL);
+    xTaskCreate(console_task, "console", 4096, NULL, 3, NULL);
+
+    ESP_LOGI(TAG, "Sistema listo. GPIO%d = silenciar buzzer", BUTTON_GPIO);
 }
