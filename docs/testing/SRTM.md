@@ -17,4 +17,4 @@
 | RNF-01 | Tiempo de respuesta <= 2 segundos | TC-013 | HIL/System | PASS |
 | RNF-02 | Operación continua por 2 horas | TC-014 | HIL/System | PASS |
 | RNF-03 | Implementación física del sistema | TC-015 | Inspection | PASS |
-| RNF-04 | Organización de documentación y repositorio | TC-016 | Inspection | En validación |
+| RNF-04 | Organización de documentación y repositorio | TC-016 | Inspection | PASS |
