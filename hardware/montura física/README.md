@@ -50,7 +50,11 @@ Los componentes electrónicos fueron integrados dentro de la montura física man
 
 Idea parcial.
 
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/be0f7399-133c-46a3-9078-50bfa1aa9512" />
+<img width="828" height="912" alt="PHOTO-2026-05-25-21-01-01" src="https://github.com/user-attachments/assets/421ed503-2ebe-444b-83dd-02aa4c294aee" />
+
+Montura física pre circuito.
+
+
 
 Montaje fisico actual.
 
