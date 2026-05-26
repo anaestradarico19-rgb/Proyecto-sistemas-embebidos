@@ -16,7 +16,7 @@ El sistema retoma automáticamente las lecturas después de reconectar el sensor
 HIL/System
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-Pendiente
+PASS
