@@ -6,10 +6,10 @@
 | BME280 | SCL | GPIO22 | I2C Clock | 3.3V |
 | BME280 | VCC | 3.3V | Alimentación | 3.3V |
 | BME280 | GND | GND | Tierra común | 0V |
-| OLED SSD1306 | SDA | GPIO21 | I2C Data | 3.3V |
-| OLED SSD1306 | SCL | GPIO22 | I2C Clock | 3.3V |
-| OLED SSD1306 | VCC | 3.3V | Alimentación | 3.3V |
-| OLED SSD1306 | GND | GND | Tierra común | 0V |
+| OLED SH1106 | SDA | GPIO21 | I2C Data | 3.3V |
+| OLED SH1106 | SCL | GPIO22 | I2C Clock | 3.3V |
+| OLED SH1106| VCC | 3.3V | Alimentación | 3.3V |
+| OLED SH1106 | GND | GND | Tierra común | 0V |
 | LED RGB | Red | GPIO25 | Canal Rojo | 3.3V |
 | LED RGB | Green | GPIO26 | Canal Verde | 3.3V |
 | LED RGB | Blue | GPIO27 | Canal Azul | 3.3V |
@@ -37,7 +37,7 @@
 ## BME280
 Sensor principal para medición de presión atmosférica y temperatura.
 
-## OLED SSD1306
+## OLED SH1106
 Visualización de:
 - presión en hPa
 - Temperatura
