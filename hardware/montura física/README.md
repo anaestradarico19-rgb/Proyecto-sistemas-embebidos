@@ -22,7 +22,7 @@ La montura física fue desarrollada con los siguientes objetivos:
 La carcasa fue diseñada considerando espacio y acceso para:
 
 - ESP32,
-- pantalla OLED SSD1306,
+- pantalla OLED SH1106,
 - sensor BME280,
 - LED RGB,
 - buzzer,
