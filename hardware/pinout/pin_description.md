@@ -4,8 +4,8 @@
 
 | Señal | GPIO ESP32 | Dispositivos |
 |---|---|---|
-| SDA | GPIO21 | OLED SSD1306 |
-| SCL | GPIO22 | OLED SSD1306 |
+| SDA | GPIO21 | OLED SH1106 |
+| SCL | GPIO22 | OLED SH1106 |
 
 Frecuencia I2C configurada:
 - 400 kHz
@@ -13,7 +13,7 @@ Frecuencia I2C configurada:
 Bus I2C utilizado:
 - I2C_NUM_0
 
-## OLED SSD1306
+## OLED SH1106
 
 | Pin OLED | Conexión |
 |---|---|
@@ -45,9 +45,9 @@ Estado actual:
 
 | Canal | GPIO |
 |---|---|
-| Red | GPIO26 |
-| Green | GPIO27 |
-| Blue | GPIO14 |
+| Red | GPIO25 |
+| Green | GPIO26 |
+| Blue | GPIO127 |
 
 Modo de control:
 - PWM mediante LEDC.
@@ -62,7 +62,7 @@ Resolución PWM:
 
 | Señal | GPIO |
 |---|---|
-| Control | GPIO25 |
+| Control | GPIO18 |
 
 Modo:
 - Salida digital.
@@ -74,14 +74,14 @@ Función:
 
 | Señal | GPIO |
 |---|---|
-| Entrada digital | GPIO0 |
+| Entrada digital | GPIO19 |
 
 Configuración:
 - Activo bajo.
 - Pull-up interno habilitado.
 
 Función:
-- Silenciar buzzer durante 15 segundos.
+- Silenciar buzzer durante 30 segundos y reiniciar el sistema.
 
 ## UART
 
