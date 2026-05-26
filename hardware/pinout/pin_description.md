@@ -28,7 +28,7 @@ Dirección I2C:
 Resolución:
 - 128x64
 
-## Sensor BMP280
+## Sensor BME280
 
 | Pin BMP280 | Conexión |
 |---|---|
@@ -97,17 +97,3 @@ Funciones:
 - Logging.
 - Comandos seriales.
 - Visualización de datos.
-
-## Distribución General de GPIO
-
-| GPIO | Función |
-|---|---|
-| GPIO21 | SDA I2C |
-| GPIO22 | SCL I2C |
-| GPIO25 | Buzzer |
-| GPIO26 | LED RGB Red |
-| GPIO27 | LED RGB Green |
-| GPIO14 | LED RGB Blue |
-| GPIO0 | Botón |
-| GPIO1 | UART TX |
-| GPIO3 | UART RX |
