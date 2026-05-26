@@ -16,7 +16,7 @@ El actuador cambia correctamente de estado cuando se supera el umbral.
 HIL/System
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-Pendiente
+PASS
