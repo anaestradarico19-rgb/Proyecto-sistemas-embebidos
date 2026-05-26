@@ -47,7 +47,7 @@ Estado actual:
 |---|---|
 | Red | GPIO25 |
 | Green | GPIO26 |
-| Blue | GPIO127 |
+| Blue | GPIO27 |
 
 Modo de control:
 - PWM mediante LEDC.
