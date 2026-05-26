@@ -16,7 +16,7 @@ El sistema registra un mensaje ERROR al desconectar el sensor.
 HIL/System
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-Pendiente
+PASS
