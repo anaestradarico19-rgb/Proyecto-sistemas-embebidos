@@ -16,7 +16,7 @@ La documentación es coherente y los commits reflejan el trabajo realizado duran
 Inspection
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-En validación
+PASS
