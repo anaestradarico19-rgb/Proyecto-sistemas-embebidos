@@ -85,11 +85,6 @@ Función:
 
 ## UART
 
-| Señal | GPIO |
-|---|---|
-| TX | GPIO1 |
-| RX | GPIO3 |
-
 Configuración UART:
 - 115200 bps
 
