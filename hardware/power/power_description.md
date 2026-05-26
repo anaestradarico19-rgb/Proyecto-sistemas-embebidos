@@ -10,7 +10,7 @@ El ESP32 regula internamente el voltaje a 3.3V para alimentar los dispositivos d
 
 Los siguientes componentes operan a 3.3V:
 
-- BMP280
+- BME280
 - OLED SSD1306
 - LED RGB
 - Buzzer y demás.
@@ -21,7 +21,7 @@ Todos los módulos comparten una conexión GND común para garantizar estabilida
 
 ## Consideraciones Eléctricas
 
-- El BMP280 opera únicamente a 3.3V.
+- El BME280 opera únicamente a 3.3V.
 - El sistema evita alimentar sensores con 5V para prevenir daños.
 - El buzzer es controlado mediante transistor para evitar sobrecorriente en los GPIO del ESP32.
 
