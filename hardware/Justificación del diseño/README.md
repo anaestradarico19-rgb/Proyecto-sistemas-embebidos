@@ -7,7 +7,7 @@ El sistema fue diseñado alrededor de un ESP32 debido a su bajo consumo energét
 El circuito integra:
 
 - Dos sensores BME280 para medición de temperatura, presión y humedad.
-- Una pantalla OLED SSD1306 para visualización de datos.
+- Una pantalla OLED SH1106 para visualización de datos.
 - Un LED RGB como sistema de indicación visual.
 - Componentes de protección y estabilización para garantizar un funcionamiento confiable.
 
