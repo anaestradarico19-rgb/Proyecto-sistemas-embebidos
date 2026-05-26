@@ -16,7 +16,7 @@ El sistema opera correctamente sin reinicios ni pérdida de datos durante la pru
 HIL/System
 
 ## Evidencia
-Pendiente
+Pass
 
 ## Estado
 PASS
