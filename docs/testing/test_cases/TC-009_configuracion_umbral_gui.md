@@ -4,7 +4,7 @@
 RF-09
 
 ## Objetivo
-Verificar que los umbrales de presión pueden modificarse desde la GUI.
+Verificar que los umbrales de presión pueden modificarse.
 
 ## Precondiciones
 GUI operativa y sistema conectado al ESP32.
@@ -16,7 +16,7 @@ Los nuevos valores de umbral son aplicados correctamente por el sistema.
 HIL/System
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-Pendiente
+PASS
