@@ -11,7 +11,7 @@ El ESP32 regula internamente el voltaje a 3.3V para alimentar los dispositivos d
 Los siguientes componentes operan a 3.3V:
 
 - BME280
-- OLED SSD1306
+- OLED SH1106
 - LED RGB
 - Buzzer y demás.
 
