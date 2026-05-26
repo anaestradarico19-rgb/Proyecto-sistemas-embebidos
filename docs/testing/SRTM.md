@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | RF-01 | Lectura de presión atmosférica | TC-001 | HIL/System | PASS |
 | RF-02 | Validación de rango de presión | TC-002 | HIL/System | PASS |
-| RF-03 | Detección de desconexión del sensor | TC-003 | HIL/System | Pendiente |
+| RF-03 | Detección de desconexión del sensor | TC-003 | HIL/System | PASS |
 | RF-04 | Activación del actuador | TC-004 | HIL/System | PASS |
 | RF-05 | Generación de mensajes INFO/WARN/ERROR | TC-005 | Integration | PASS |
 | RF-06 | Comunicación I2C | TC-006 | Integration | PASS |
