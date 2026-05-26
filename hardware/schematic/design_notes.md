@@ -6,11 +6,11 @@ El sistema está basado en un ESP32 como unidad principal de procesamiento.
 
 El ESP32 se comunica mediante I2C con:
 
-- OLED SSD1306
+- OLED SH1106
 
 ## Sensor Principal
 
-Se utiliza un BMP280 para la adquisición de presión atmosférica en hPa.
+Se utiliza un BME280 para la adquisición de presión atmosférica en hPa.
 
 ## Interfaz Visual
 
