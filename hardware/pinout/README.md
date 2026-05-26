@@ -2,10 +2,10 @@
 
 | Componente | Pin del Componente | Pin ESP32 | Protocolo / Función | Voltaje |
 |---|---|---|---|---|
-| BMP280 | SDA | GPIO21 | I2C Data | 3.3V |
-| BMP280 | SCL | GPIO22 | I2C Clock | 3.3V |
-| BMP280 | VCC | 3.3V | Alimentación | 3.3V |
-| BMP280 | GND | GND | Tierra común | 0V |
+| BME280 | SDA | GPIO21 | I2C Data | 3.3V |
+| BME280 | SCL | GPIO22 | I2C Clock | 3.3V |
+| BME280 | VCC | 3.3V | Alimentación | 3.3V |
+| BME280 | GND | GND | Tierra común | 0V |
 | OLED SSD1306 | SDA | GPIO21 | I2C Data | 3.3V |
 | OLED SSD1306 | SCL | GPIO22 | I2C Clock | 3.3V |
 | OLED SSD1306 | VCC | 3.3V | Alimentación | 3.3V |
@@ -29,13 +29,13 @@
 - SDA → GPIO21
 - SCL → GPIO22
 - Frecuencia → 100 kHz
-- Dirección BMP280 → 0x77
+- Dirección BME280 
 - Dirección OLED SSD1306 → 0x3C
 
 # Funcionalidad de Hardware
 
-## BMP280
-Sensor principal para medición de presión atmosférica.
+## BME280
+Sensor principal para medición de presión atmosférica y temperatura.
 
 ## OLED SSD1306
 Visualización de:
