@@ -16,7 +16,7 @@ La GUI muestra datos actualizados y errores activos.
 HIL/System
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-Pendiente
+PASS
