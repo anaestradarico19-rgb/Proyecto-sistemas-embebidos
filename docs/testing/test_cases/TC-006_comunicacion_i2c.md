@@ -16,7 +16,7 @@ Los dispositivos I2C son detectados correctamente.
 Integration
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-En validación
+PASS
