@@ -16,7 +16,7 @@ El dispositivo cuenta con hardware ensamblado correctamente y sin uso de protobo
 Inspection
 
 ## Evidencia
-Pendiente
+PASS
 
 ## Estado
-Pendiente
+PASS
