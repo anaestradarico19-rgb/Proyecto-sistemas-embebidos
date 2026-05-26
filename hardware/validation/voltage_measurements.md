@@ -4,12 +4,9 @@
 
 Se verificó la correcta alimentación del ESP32 y los periféricos usando una fuente externa de 5V (Computador).
 
-## Validación del Sensor BMP280
+## Validación del Sensor BME280
 
-El sensor BMP280 fue detectado correctamente mediante comunicación I2C.
-
-Dirección detectada:
-- 0x76
+El sensor BME280 fue detectado correctamente mediante comunicación I2C.
 
 Las lecturas de presión permanecieron estables durante las pruebas iniciales, y cambiaron cuando se esperaba en cuanto a nuestra forma de prueba.
 
